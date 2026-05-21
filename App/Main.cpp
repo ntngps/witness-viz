@@ -35,6 +35,7 @@
 #define NOCLIP_DOWN         0x425
 #define KEY_RELEASED        0x426
 #define OPEN_KEYBINDS       0x427
+#define NOCLIP_SMOOTHING    0x430 // Add our new Cinematic Toggle ID!
 
 // BUGS:
 // - Changing from old ver to new ver can set FOV = 0?
@@ -304,7 +305,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetStringText(g_hwnd, WINDOW_TITLE);
                 SetFloatText(g_noclipSpeed, g_trainer->GetNoclipSpeed());
                 SetFloatText(g_sprintSpeed, g_trainer->GetSprintSpeed());
-                SetFloatText(g_fovCurrent, g_trainer->GetFov());
+                SetFloatText(g_fovCurrent, (float)g_trainer->GetFov());
                 CheckDlgButton(hwnd, NOCLIP_ENABLED, g_trainer->GetNoclip());
                 EnableWindow(g_flyUp, g_trainer->GetNoclip());
                 EnableWindow(g_flyDown, g_trainer->GetNoclip());
@@ -320,56 +321,89 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Process was already running, and so were we (this recurs every heartbeat). Enforce settings and apply repeated actions.
                 g_trainer->SetNoclip(IsDlgButtonChecked(hwnd, NOCLIP_ENABLED));
 
-                // Define the Virtual Key (VK) codes you want to use for flying.
-                // By default here, I'm setting Spacebar (VK_SPACE) for Up and Left Control (VK_LCONTROL) for Down.
-                // If the trainer has a UI box to set these keys, you would fetch that value here instead.
+                /// 1. Read the inputs
                 int vkNoclipUp = VK_NUMPAD8;
                 int vkNoclipDown = VK_NUMPAD2;
+                bool isUpHeld = (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) || (GetAsyncKeyState(vkNoclipUp) & 0x8000);
+                bool isDownHeld = (SendMessage(g_flyDown, BM_GETSTATE, NULL, NULL) & BST_PUSHED) || (GetAsyncKeyState(vkNoclipDown) & 0x8000);
 
-                // Check if the UI button is being clicked OR if the actual keyboard hotkey is being held down
-                bool isUpHeld = (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) ||
-                    (GetAsyncKeyState(vkNoclipUp) & 0x8000);
+                // 2. Determine our TARGET velocity based on keys
+                float targetZVelocity = 0.0f;
+                float baseSpeed = 0.01f * GetWindowFloat(g_noclipSpeed);
 
-                bool isDownHeld = (SendMessage(g_flyDown, BM_GETSTATE, NULL, NULL) & BST_PUSHED) ||
-                    (GetAsyncKeyState(vkNoclipDown) & 0x8000);
-
-                // Move the camera accordingly based on our new, combined check
                 if (isUpHeld) {
-                    auto pos = g_trainer->GetCameraPos();
-                    pos[2] += 0.01f * GetWindowFloat(g_noclipSpeed);
-                    pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
-                    g_trainer->SetCameraPos(pos);
+                    targetZVelocity = baseSpeed;
                 }
                 else if (isDownHeld) {
+                    targetZVelocity = -baseSpeed;
+                }
+
+                // 3. Keep track of our CURRENT velocity across frames (static keeps it alive)
+                static float currentZVelocity = 0.0f;
+
+                // 4. THE LERP: Check our new UI checkbox!
+                if (IsDlgButtonChecked(hwnd, NOCLIP_SMOOTHING)) {
+                    // If checked, smoothly glide current velocity toward target velocity.
+                    // 0.05f is the "Friction/Weight". Lower = heavier drone, Higher = snappier.
+                    currentZVelocity += (targetZVelocity - currentZVelocity) * 0.05f;
+                }
+                else {
+                    // If unchecked, start and stop instantly like normal.
+                    currentZVelocity = targetZVelocity;
+                }
+
+                // 5. Apply the movement
+                // We use a tiny threshold (0.0001f) so it stops writing to memory when totally still.
+                if (abs(currentZVelocity) > 0.0001f) {
                     auto pos = g_trainer->GetCameraPos();
-                    pos[2] -= 0.01f * GetWindowFloat(g_noclipSpeed);
+                    pos[2] += currentZVelocity;
                     pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
                     g_trainer->SetCameraPos(pos);
                 }
 
-                // A static boolean acts as a lightswitch we can flip on and off
-                /* static bool showLights = false;
-                static bool f5WasHeld = false;
+                // --- DYNAMIC FOV ZOOM ENGINE ---
 
-                if (GetAsyncKeyState(VK_F5) & 0x8000) {
-                    if (!f5WasHeld) {
-                        showLights = !showLights;
+                // 1. Check if our Numpad keys are being held
+                bool zoomInHeld = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000);
+                bool zoomOutHeld = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000);
 
-                        // If we just turned it ON, do the heavy memory scan once!
-                        if (showLights) {
-                            g_trainer->FindLightsOnce();
-                        }
+                // 2. Set the target velocity (How fast we want the lens to zoom)
+                float targetFovVelocity = 0.0f;
+                float zoomSpeed = 0.4f; // Adjust this to make the max zoom speed faster or slower
 
-                        f5WasHeld = true;
+                if (zoomInHeld) {
+                    targetFovVelocity = -zoomSpeed; // Zoom IN means lowering the FOV number
+                }
+                else if (zoomOutHeld) {
+                    targetFovVelocity = zoomSpeed;  // Zoom OUT means raising the FOV number
+                }
+
+                // 3. Keep track of current velocity for that buttery smooth Lerp
+                static float currentFovVelocity = 0.0f;
+
+                // 4. Calculate the momentum (0.05f is the 'weight' of the camera lens)
+                currentFovVelocity += (targetFovVelocity - currentFovVelocity) * 0.05f;
+
+                // 5. Apply the zoom if the lens is moving
+                if (abs(currentFovVelocity) > 0.001f) {
+                    double fov = g_trainer->GetFov();
+                    fov += currentFovVelocity;
+
+                    // SAFETY CLAMPS: Do not let the FOV go below 5 or above 140, 
+                    // otherwise the game's rendering math will divide by zero and crash!
+                    if (fov < 5.0f) {
+                        fov = 5.0f;
+                        currentFovVelocity = 0.0f; // Stop momentum if we hit the wall
                     }
-                }
-                else {
-                    f5WasHeld = false;
+                    else if (fov > 140.0f) {
+                        fov = 140.0f;
+                        currentFovVelocity = 0.0f;
+                    }
+
+                    g_trainer->SetFov(fov);
                 }
 
-                if (showLights) {
-                    g_trainer->DrawLightVolumes(); // This is now safe to run every frame!
-                } */
+              
 
                 break; // Assuming there is a break at the end of this case block in the original code
             }
@@ -380,7 +414,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 if (g_hwnd == GetForegroundWindow()) {
                     g_trainer->SetFov(GetWindowFloat(g_fovCurrent));
                 } else {
-                    SetFloatText(g_fovCurrent, g_trainer->GetFov());
+                    SetFloatText(g_fovCurrent, (float)g_trainer->GetFov());
                 }
 
                 // Continuously update the 'snap target' if one is selected
@@ -614,6 +648,12 @@ void CreateComponents() {
 
     CreateLabelAndCheckbox(x, y, 100, L"Noclip Enabled", NOCLIP_ENABLED, "noclip_enabled");
 
+    // Add this near the other noclip CreateWindow calls in CreateComponents()
+    CreateWindow(L"BUTTON", L"Cinematic Z-Smoothing",
+        WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+        10, 50, 180, 20, // X, Y, Width, Height (Adjust Y if it overlaps!)
+        g_hwnd, (HMENU)NOCLIP_SMOOTHING, g_hInstance, NULL);
+
     g_flyUp = CreateButton(x, y, 70, L"Fly up", NOCLIP_UP, "fly_up");
     EnableWindow(g_flyUp, false);
     y -= 30;
@@ -749,9 +789,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
     g_witnessProc = std::make_shared<Memory>(L"witness64_d3d11.exe", L"witness64_d3d11.exe");
     g_trainer = std::make_shared<Trainer>(g_witnessProc);
-
-    // g_trainer->InitOverlay(); // <--- ADD YOUR NEW GLASS PANE HERE!
-
     g_trainer->StartHeartbeat(g_hwnd, HEARTBEAT);
 #ifndef _DEBUG
     // Don't hook in debug mode. While debugging, we are paused (and thus cannot run the hook). So, we will timeout on every hook call!

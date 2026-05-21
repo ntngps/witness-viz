@@ -259,7 +259,7 @@ void Trainer::OnGameStart() {
 Trainer::~Trainer() {
     SetNoclip(false);
     SetNoclipSpeed(4.0f);
-    float fov = GetFov();
+    double fov = GetFov();
     SetFov(CLAMP(fov, 80.0f, 120.0f));
     SetCanSave(true);
     SetSprintSpeed(2.0f);
@@ -580,6 +580,7 @@ std::vector<float> Trainer::GetCameraAng() {
     return _memory->ReadData<float>({_cameraAng}, 2);
 }
 
+/* this is the original GetFov function 
 float Trainer::GetFov() {
     if (_fovCurrent == 0) return 0.0f; // FOV is not available on some old patches
 
@@ -591,7 +592,7 @@ float Trainer::GetFov() {
     fov = atan(fov);
     fov *= 114.5915590261646;
     return (float)fov;
-}
+} */
 
 bool Trainer::CanSave() {
     return _memory->ReadData<byte>({_campaignState, 0x50}, 1)[0] == 0x00;
@@ -653,7 +654,20 @@ void Trainer::SetCameraAng(const std::vector<float>& ang) {
     _memory->WriteData<float>({_cameraAng}, ang);
 }
 
+double Trainer::GetFov() {
+    if (!_fovCurrent) return 50.0f;
+    return _memory->ReadData<double>({ _fovCurrent }, 1)[0];
+}
+
 void Trainer::SetFov(double fov) {
+    if (!_fovCurrent) return;
+
+    // Create the vector explicitly on its own line so the compiler doesn't panic
+    std::vector<double> fovData = { fov };
+    _memory->WriteData<double>({ _fovCurrent }, fovData);
+}
+
+/* original: void Trainer::SetFov(double fov) {
     if (_fovCurrent == 0) return;
     // This computation is called fov_vertical_from_horizontal.
     fov *= 0.00872664625997165;
@@ -663,7 +677,7 @@ void Trainer::SetFov(double fov) {
     fov *= 114.5915590261646;
 
     _memory->WriteData<float>({_fovCurrent}, {(float)fov});
-}
+} */
 
 void Trainer::SetCanSave(bool canSave) {
     _memory->WriteData<byte>({_campaignState, 0x50}, {canSave ? (byte)0x00 : (byte)0x01});
@@ -815,200 +829,3 @@ void Trainer::SetEPOverlayMinSize(bool enable) {
 void Trainer::ClampAimingPhi(bool clamp) {
     _memory->WriteData<byte>({_debugMode}, {clamp ? (byte)0x00 : (byte)0x09});
 }
-
-/* bool Trainer::WorldToScreen(std::vector<float> worldPos, std::vector<float> camPos, std::vector<float> camQuat, float& screenX, float& screenY, int windowWidth, int windowHeight) {
-    //auto camPos = GetCameraPos();
-    //auto camQuat = GetCameraAngle(); // 4 floats: X, Y, Z, W
-
-    // 1. Calculate the vector from the camera to the object
-    float dirX = worldPos[0] - camPos[0];
-    float dirY = worldPos[1] - camPos[1];
-    float dirZ = worldPos[2] - camPos[2];
-
-    // 2. Convert the Camera Quaternion into "Forward", "Right", and "Up" directional vectors
-    // (This is standard 3D rendering math to figure out exactly which way the player is looking)
-    float qx = camQuat[0], qy = camQuat[1], qz = camQuat[2], qw = camQuat[3];
-
-    // Forward Vector (The direction the camera is facing)
-    float fwdX = 2.0f * (qx * qz + qw * qy);
-    float fwdY = 2.0f * (qy * qz - qw * qx);
-    float fwdZ = 1.0f - 2.0f * (qx * qx + qy * qy);
-
-    // Right Vector
-    float rightX = 1.0f - 2.0f * (qy * qy + qz * qz);
-    float rightY = 2.0f * (qx * qy + qw * qz);
-    float rightZ = 2.0f * (qx * qz - qw * qy);
-
-    // Up Vector
-    float upX = 2.0f * (qx * qy - qw * qz);
-    float upY = 1.0f - 2.0f * (qx * qx + qz * qz);
-    float upZ = 2.0f * (qy * qz + qw * qx);
-
-    // 3. Project the object's position onto the camera's axes
-    // This gives us the X, Y, Z position RELATIVE to the camera lens
-    float localX = dirX * rightX + dirY * rightY + dirZ * rightZ;
-    float localY = dirX * upX + dirY * upY + dirZ * upZ;
-    float localZ = dirX * fwdX + dirY * fwdY + dirZ * fwdZ;
-
-    // 4. Depth Check (Is it behind us?)
-    // localZ is the "W" depth value. If it's less than 0, the light is behind the player!
-    if (localZ < 0.1f) return false;
-
-    // 5. The Perspective Divide
-    // We assume a standard Field of View (FOV) of ~90 degrees. 
-    // Dividing by localZ makes objects further away shrink towards the center.
-    float fovScaling = 1.0f; // Can be tweaked if your in-game FOV slider is changed
-    float ndcX = (localX / localZ) * fovScaling;
-    float ndcY = (localY / localZ) * fovScaling;
-
-    // 6. Viewport Transform (Convert to Monitor Pixels)
-    // We have to account for the monitor's aspect ratio
-    float aspectRatio = (float)windowWidth / (float)windowHeight;
-    ndcX /= aspectRatio;
-
-    screenX = (windowWidth / 2.0f) * (ndcX + 1.0f);
-    screenY = (windowHeight / 2.0f) * (1.0f - ndcY); // Inverted because monitors draw Y downwards
-
-    return true; // The math succeeded and the object is on screen!
-}
-
- void Trainer::FindLightsOnce() {
-    _lightPositions.clear();
-
-    // 1. Get our own safe handle to the game so we bypass the trainer's crash handler
-    HWND hwnd = FindWindowA(NULL, "The Witness");
-    if (!hwnd) return;
-    DWORD pid;
-    GetWindowThreadProcessId(hwnd, &pid);
-    HANDLE hProcess = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-    if (!hProcess) return;
-
-    // A tiny helper function to read 64-bit pointers safely
-    auto ReadPtr = [&](int64_t addr, int64_t& out) -> bool {
-        SIZE_T r;
-        return ReadProcessMemory(hProcess, (LPCVOID)addr, &out, 8, &r) && r == 8;
-        };
-
-    int64_t globalsPtr = 0;
-    if (ReadPtr(_globals, globalsPtr)) {
-
-        // Read maxId (which is a 4-byte integer)
-        int maxId = 0;
-        SIZE_T r;
-        ReadProcessMemory(hProcess, (LPCVOID)(globalsPtr + 0x14), &maxId, 4, &r);
-
-        int64_t entityListPtr = 0;
-        if (ReadPtr(globalsPtr + 0x18, entityListPtr)) {
-
-            // Loop through the entities safely!
-            for (int id = 1; id < maxId; id++) {
-
-                int64_t entityPtr = 0;
-                if (!ReadPtr(entityListPtr + (id * 8), entityPtr) || entityPtr == 0) continue;
-
-                // Read typeName string pointers (Offsets: +0x08, +0x08)
-                int64_t typeNamePtr1 = 0;
-                if (!ReadPtr(entityPtr + 0x08, typeNamePtr1) || typeNamePtr1 == 0) continue;
-
-                int64_t typeNamePtr2 = 0;
-                if (!ReadPtr(typeNamePtr1 + 0x08, typeNamePtr2) || typeNamePtr2 == 0) continue;
-
-                // Read the actual text characters
-                char typeName[32] = { 0 };
-                if (ReadProcessMemory(hProcess, (LPCVOID)typeNamePtr2, typeName, 31, &r)) {
-                    std::string typeStr(typeName);
-
-                    if (typeStr == "Light" || typeStr == "Light_Probe") {
-                        // We found a light! Read the X,Y,Z position (3 floats = 12 bytes at offset 0x24)
-                        float pos[3] = { 0 };
-                        if (ReadProcessMemory(hProcess, (LPCVOID)(entityPtr + 0x24), pos, 12, &r)) {
-                            _lightPositions.push_back({ pos[0], pos[1], pos[2] });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Clean up our handle
-    CloseHandle(hProcess);
-}
-
-void Trainer::DrawLightVolumes() {
-    HWND gameHwnd = FindWindowA(NULL, "The Witness");
-    if (!gameHwnd || !_overlayHwnd) return;
-
-    // 1. Find the exact screen coordinates of the game's renderable area
-    RECT clientRect;
-    GetClientRect(gameHwnd, &clientRect);
-    POINT topLeft = { 0, 0 };
-    ClientToScreen(gameHwnd, &topLeft);
-    int width = clientRect.right - clientRect.left;
-    int height = clientRect.bottom - clientRect.top;
-
-    // 2. Move our glass pane to perfectly cover the game area
-    SetWindowPos(_overlayHwnd, HWND_TOPMOST, topLeft.x, topLeft.y, width, height, SWP_SHOWWINDOW);
-
-    // 3. Read the camera safely
-    std::vector<float> camPos;
-    std::vector<float> camQuat;
-    try {
-        camPos = GetCameraPos();
-        camQuat = GetCameraAngle();
-    }
-    catch (...) {
-        return;
-    }
-
-    // 4. Setup the canvas on OUR overlay, not the game
-    HDC hdc = GetDC(_overlayHwnd);
-
-    // 5. WIPE THE GLASS: Paint the whole overlay Invisible Black to clear the previous frame
-    HBRUSH blackBrush = CreateSolidBrush(RGB(0, 0, 0));
-    RECT overlayRect = { 0, 0, width, height };
-    FillRect(hdc, &overlayRect, blackBrush);
-    DeleteObject(blackBrush);
-
-    // 6. DRAW THE BOXES
-    HPEN redPen = CreatePen(PS_SOLID, 2, RGB(255, 0, 0));
-    HGDIOBJ oldPen = SelectObject(hdc, redPen);
-    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-
-    for (const auto& pos : _lightPositions) {
-        float screenX = 0, screenY = 0;
-        if (WorldToScreen(pos, camPos, camQuat, screenX, screenY, width, height)) {
-            int x = static_cast<int>(screenX);
-            int y = static_cast<int>(screenY);
-
-            // Draw a 20x20 pixel square
-            Rectangle(hdc, x - 10, y - 10, x + 10, y + 10);
-        }
-    }
-
-    // 7. Cleanup
-    SelectObject(hdc, oldPen);
-    SelectObject(hdc, oldBrush);
-    DeleteObject(redPen);
-    ReleaseDC(_overlayHwnd, hdc);
-}
-
-void Trainer::InitOverlay() {
-    WNDCLASSEXA wc = { sizeof(WNDCLASSEXA) };
-    wc.lpfnWndProc = DefWindowProc;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = "WitnessOverlay";
-    RegisterClassExA(&wc);
-
-    // Create a layered, transparent window that ignores mouse clicks
-    _overlayHwnd = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
-        "WitnessOverlay", "Witness Overlay",
-        WS_POPUP,
-        0, 0, 800, 600, // Placeholder size, we will resize it dynamically
-        NULL, NULL, wc.hInstance, NULL
-    );
-
-    // Tell Windows: "Treat Black (RGB 0,0,0) as completely invisible"
-    SetLayeredWindowAttributes(_overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
-    ShowWindow(_overlayHwnd, SW_SHOW);
-} */

@@ -45,7 +45,6 @@ public:
     std::vector<float> GetCameraPos();
     std::vector<float> GetCameraAngle();
     std::vector<float> GetCameraAng();
-    float GetFov();
     bool CanSave();
     float GetSprintSpeed();
     bool GetInfiniteChallenge();
@@ -61,6 +60,7 @@ public:
     void SetPlayerPos(const std::vector<float>& pos);
     void SetCameraPos(const std::vector<float>& pos);
     void SetCameraAng(const std::vector<float>& ang);
+    double GetFov();
     void SetFov(double fov);
     void SetCanSave(bool canSave);
     void SetSprintSpeed(float speed);
@@ -80,8 +80,8 @@ public:
     std::vector<std::vector<float>> _lightPositions; // A list to save the coordinates
     void FindLightsOnce();
 
-    //HWND _overlayHwnd = NULL; // overlay
-    //void InitOverlay(); // overlay
+    // float GetFov();
+    // void SetFov(float fov);
 
 private:
     ProcStatus Heartbeat();
