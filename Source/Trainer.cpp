@@ -2,6 +2,10 @@
 #include "Trainer.h"
 #include "Panels.h"
 
+// Tell the linker to grab the Windows Graphics toolboxes!
+#pragma comment(lib, "Gdi32.lib")
+#pragma comment(lib, "User32.lib")
+
 Trainer::Trainer(std::shared_ptr<Memory> memory) : _memory(memory) {
     _memory->AddSigScan("84 C0 75 59 BA 20 00 00 00", [this](__int64 offset, int index, const std::vector<byte>& data) {
         // This int is actually desired_movement_direction, which immediately preceeds camera_position
@@ -278,24 +282,40 @@ int Trainer::GetActivePanel() {
 
 std::shared_ptr<Trainer::EntityData> Trainer::GetEntityData(int id) {
     if (id == -1) return nullptr;
-    int64_t entity = _memory->ReadData<int64_t>({_globals, 0x18, id * 8}, 1)[0];
-    if (entity == 0) return nullptr; // Entity is not defined, manager is likely being re-allocated due to load.
-    int readId = _memory->ReadData<int>({_globals, 0x18, id * 8, 0x10}, 1)[0];
-    if (id != (readId - 1)) return nullptr; // Entity is no longer a valid object (or is not the entity we expected to read)
 
-    // _memory->ClearComputedAddress({_globals, 0x18, id * 8, 0x08, 0x08});
-    std::string typeName = _memory->ReadString({_globals, 0x18, id * 8, 0x08, 0x08}, 4);
-    auto entityData = std::make_shared<EntityData>();
-    entityData->id = id;
-    entityData->type = typeName;
-    entityData->entity = entity;
-    entityData->position = _memory->ReadData<float>({_globals, 0x18, id * 8, 0x24}, 3);
+    // The try/catch block will safely swallow any memory reading errors!
+    try {
+        int64_t entity = _memory->ReadData<int64_t>({ _globals, 0x18, id * 8 }, 1)[0];
+        if (entity == 0) return nullptr;
 
-    // Look up extra data for some types
-    if (typeName == "Machine_Panel")      GetPanelData(entityData);
-    else if (typeName == "Pattern_Point") GetEPData(entityData);
-    else if (typeName == "Door")          GetDoorData(entityData);
-    return entityData;
+        int readId = _memory->ReadData<int>({ _globals, 0x18, id * 8, 0x10 }, 1)[0];
+        if (id != (readId - 1)) return nullptr;
+
+        std::string typeName = _memory->ReadString({ _globals, 0x18, id * 8, 0x08, 0x08 }, 4);
+        auto entityData = std::make_shared<EntityData>();
+        entityData->id = id;
+        entityData->type = typeName;
+        entityData->entity = entity;
+        entityData->position = _memory->ReadData<float>({ _globals, 0x18, id * 8, 0x24 }, 3);
+
+        // Look up extra data for some types
+        if (typeName == "Machine_Panel")      GetPanelData(entityData);
+        else if (typeName == "Pattern_Point") GetEPData(entityData);
+        else if (typeName == "Door")          GetDoorData(entityData);
+
+        // --- OUR NEW LIGHT HOOK ---
+        else if (typeName == "Light" || typeName == "Light_Probe") {
+            // For now, we are just capturing them. 
+            // We will add specific radius/color data extraction here later!
+        }
+
+        return entityData;
+
+    }
+    catch (...) {
+        // If the entity is malformed or missing strings, just ignore it and move on safely.
+        return nullptr;
+    }
 }
 
 struct Traced_Edge final {
@@ -457,45 +477,35 @@ void Trainer::ShowNearbyEntities() {
 }
 
 void Trainer::ExportEntities() {
-    int32_t maxId = _memory->ReadData<int>({_globals, 0x14}, 1)[0];
+    int32_t maxId = _memory->ReadData<int>({ _globals, 0x14 }, 1)[0];
 
     DebugPrint("Entity ID\tType\tName\t     X\t     Y\t     Z");
     for (int32_t id = 1; id < maxId; id++) {
-        int32_t entity = _memory->ReadData<int>({_globals, 0x18, id * 8}, 1)[0];
-        if (entity == 0) continue;
-        std::string typeName = _memory->ReadString({_globals, 0x18, id * 8, 0x08, 0x08}, 4);
-        std::string entityName = _memory->ReadString({_globals, 0x18, id * 8, 0x58}, 4);
-        std::vector<float> pos = _memory->ReadData<float>({_globals, 0x18, id * 8, 0x24}, 3);
+        int32_t entity = _memory->ReadData<int>({ _globals, 0x18, id * 8 }, 1)[0];
+        if (entity == 0) continue; // The Swiss Cheese safety check!
 
-        if (typeName != "Power_Cable") continue;
+        std::string typeName = _memory->ReadString({ _globals, 0x18, id * 8, 0x08, 0x08 }, 4);
+        std::string entityName = _memory->ReadString({ _globals, 0x18, id * 8, 0x58 }, 4);
+        std::vector<float> pos = _memory->ReadData<float>({ _globals, 0x18, id * 8, 0x24 }, 3);
 
-        std::vector<int> ids = _memory->ReadData<int>({_globals, 0x18, id * 8, 0xD4}, 4);
-        std::string textureName = _memory->ReadString({_globals, 0x18, id * 8, 0x140}, 4);
-        std::string materialName = _memory->ReadString({_globals, 0x18, id * 8, 0x148}, 4);
-        std::vector<float> colorData = _memory->ReadData<float>({_globals, 0x18, id * 8, 0x150}, 8);
-        std::string meshName = _memory->ReadString({_globals, 0x18, id * 8, 0x188}, 4);
-        std::string poweredOnTexture = _memory->ReadString({_globals, 0x18, id * 8, 0x190}, 4);
-        std::string powered_on_sound_name = _memory->ReadString({_globals, 0x18, id * 8, 0x198}, 4);
-        std::string powered_off_sound_name = _memory->ReadString({_globals, 0x18, id * 8, 0x1A0}, 4);
-        std::string ambient_sound_name = _memory->ReadString({_globals, 0x18, id * 8, 0x1A8}, 4);
-        std::string powered_on_texture_name = _memory->ReadString({_globals, 0x18, id * 8, 0x1B0}, 4);
+        // --- COMMENT OUT THE FILTER ---
+        // if (typeName != "Power_Cable") continue; 
 
+        // --- JUST PRINT THE BASICS ---
         std::stringstream message;
         message << "0x" << std::hex << std::setfill('0') << std::setw(5) << id << '\t';
         message << typeName << '\t';
         message << entityName << '\t';
-        message << pos[0] << '\t' << pos[1] << '\t' << pos[2] << '\t';
-        for (int i : ids) message << "0x" << std::hex << std::setfill('0') << std::setw(5) << i << '\t';
-        message << textureName << '\t';
-        message << materialName << '\t';
-        for (float c : colorData) message << c << '\t';
-        message << meshName << '\t';
-        message << poweredOnTexture << '\t';
-        message << powered_on_sound_name << '\t';
-        message << powered_off_sound_name << '\t';
-        message << ambient_sound_name << '\t';
-        message << powered_on_texture_name << '\t';
+        message << pos[0] << '\t' << pos[1] << '\t' << pos[2];
         DebugPrint(message.str());
+
+        // --- COMMENT OUT ALL THE POWER CABLE DATA ---
+        /*
+        std::vector<int> ids = _memory->ReadData<int>({_globals, 0x18, id * 8, 0xD4}, 4);
+        std::string textureName = _memory->ReadString({_globals, 0x18, id * 8, 0x140}, 4);
+        // ... (all the other strings and floats)
+        message << powered_on_texture_name << '\t';
+        */
     }
     DebugPrint("------ Done ------");
 }
@@ -559,6 +569,11 @@ std::vector<float> Trainer::GetPlayerPos() {
 
 std::vector<float> Trainer::GetCameraPos() {
     return _memory->ReadData<float>({_cameraPos}, 3);
+}
+
+std::vector<float> Trainer::GetCameraAngle() {
+    // A quaternion has 4 components (X, Y, Z, W), so we read 4 floats from memory!
+    return _memory->ReadData<float>({ _cameraAng }, 4);
 }
 
 std::vector<float> Trainer::GetCameraAng() {
@@ -799,4 +814,168 @@ void Trainer::SetEPOverlayMinSize(bool enable) {
 
 void Trainer::ClampAimingPhi(bool clamp) {
     _memory->WriteData<byte>({_debugMode}, {clamp ? (byte)0x00 : (byte)0x09});
+}
+
+bool Trainer::WorldToScreen(std::vector<float> worldPos, std::vector<float> camPos, std::vector<float> camQuat, float& screenX, float& screenY, int windowWidth, int windowHeight) {
+    //auto camPos = GetCameraPos();
+    //auto camQuat = GetCameraAngle(); // 4 floats: X, Y, Z, W
+
+    // 1. Calculate the vector from the camera to the object
+    float dirX = worldPos[0] - camPos[0];
+    float dirY = worldPos[1] - camPos[1];
+    float dirZ = worldPos[2] - camPos[2];
+
+    // 2. Convert the Camera Quaternion into "Forward", "Right", and "Up" directional vectors
+    // (This is standard 3D rendering math to figure out exactly which way the player is looking)
+    float qx = camQuat[0], qy = camQuat[1], qz = camQuat[2], qw = camQuat[3];
+
+    // Forward Vector (The direction the camera is facing)
+    float fwdX = 2.0f * (qx * qz + qw * qy);
+    float fwdY = 2.0f * (qy * qz - qw * qx);
+    float fwdZ = 1.0f - 2.0f * (qx * qx + qy * qy);
+
+    // Right Vector
+    float rightX = 1.0f - 2.0f * (qy * qy + qz * qz);
+    float rightY = 2.0f * (qx * qy + qw * qz);
+    float rightZ = 2.0f * (qx * qz - qw * qy);
+
+    // Up Vector
+    float upX = 2.0f * (qx * qy - qw * qz);
+    float upY = 1.0f - 2.0f * (qx * qx + qz * qz);
+    float upZ = 2.0f * (qy * qz + qw * qx);
+
+    // 3. Project the object's position onto the camera's axes
+    // This gives us the X, Y, Z position RELATIVE to the camera lens
+    float localX = dirX * rightX + dirY * rightY + dirZ * rightZ;
+    float localY = dirX * upX + dirY * upY + dirZ * upZ;
+    float localZ = dirX * fwdX + dirY * fwdY + dirZ * fwdZ;
+
+    // 4. Depth Check (Is it behind us?)
+    // localZ is the "W" depth value. If it's less than 0, the light is behind the player!
+    if (localZ < 0.1f) return false;
+
+    // 5. The Perspective Divide
+    // We assume a standard Field of View (FOV) of ~90 degrees. 
+    // Dividing by localZ makes objects further away shrink towards the center.
+    float fovScaling = 1.0f; // Can be tweaked if your in-game FOV slider is changed
+    float ndcX = (localX / localZ) * fovScaling;
+    float ndcY = (localY / localZ) * fovScaling;
+
+    // 6. Viewport Transform (Convert to Monitor Pixels)
+    // We have to account for the monitor's aspect ratio
+    float aspectRatio = (float)windowWidth / (float)windowHeight;
+    ndcX /= aspectRatio;
+
+    screenX = (windowWidth / 2.0f) * (ndcX + 1.0f);
+    screenY = (windowHeight / 2.0f) * (1.0f - ndcY); // Inverted because monitors draw Y downwards
+
+    return true; // The math succeeded and the object is on screen!
+}
+
+void Trainer::FindLightsOnce() {
+    _lightPositions.clear();
+
+    // 1. Get our own safe handle to the game so we bypass the trainer's crash handler
+    HWND hwnd = FindWindowA(NULL, "The Witness");
+    if (!hwnd) return;
+    DWORD pid;
+    GetWindowThreadProcessId(hwnd, &pid);
+    HANDLE hProcess = OpenProcess(PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) return;
+
+    // A tiny helper function to read 64-bit pointers safely
+    auto ReadPtr = [&](int64_t addr, int64_t& out) -> bool {
+        SIZE_T r;
+        return ReadProcessMemory(hProcess, (LPCVOID)addr, &out, 8, &r) && r == 8;
+        };
+
+    int64_t globalsPtr = 0;
+    if (ReadPtr(_globals, globalsPtr)) {
+
+        // Read maxId (which is a 4-byte integer)
+        int maxId = 0;
+        SIZE_T r;
+        ReadProcessMemory(hProcess, (LPCVOID)(globalsPtr + 0x14), &maxId, 4, &r);
+
+        int64_t entityListPtr = 0;
+        if (ReadPtr(globalsPtr + 0x18, entityListPtr)) {
+
+            // Loop through the entities safely!
+            for (int id = 1; id < maxId; id++) {
+
+                int64_t entityPtr = 0;
+                if (!ReadPtr(entityListPtr + (id * 8), entityPtr) || entityPtr == 0) continue;
+
+                // Read typeName string pointers (Offsets: +0x08, +0x08)
+                int64_t typeNamePtr1 = 0;
+                if (!ReadPtr(entityPtr + 0x08, typeNamePtr1) || typeNamePtr1 == 0) continue;
+
+                int64_t typeNamePtr2 = 0;
+                if (!ReadPtr(typeNamePtr1 + 0x08, typeNamePtr2) || typeNamePtr2 == 0) continue;
+
+                // Read the actual text characters
+                char typeName[32] = { 0 };
+                if (ReadProcessMemory(hProcess, (LPCVOID)typeNamePtr2, typeName, 31, &r)) {
+                    std::string typeStr(typeName);
+
+                    if (typeStr == "Light" || typeStr == "Light_Probe") {
+                        // We found a light! Read the X,Y,Z position (3 floats = 12 bytes at offset 0x24)
+                        float pos[3] = { 0 };
+                        if (ReadProcessMemory(hProcess, (LPCVOID)(entityPtr + 0x24), pos, 12, &r)) {
+                            _lightPositions.push_back({ pos[0], pos[1], pos[2] });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Clean up our handle
+    CloseHandle(hProcess);
+}
+
+void Trainer::DrawLightVolumes() {
+    HWND hwnd = FindWindowA(NULL, "The Witness");
+    if (!hwnd) return;
+
+    std::vector<float> camPos;
+    std::vector<float> camQuat;
+    try {
+        camPos = GetCameraPos();
+        camQuat = GetCameraAngle();
+    }
+    catch (...) {
+        return;
+    }
+
+    RECT clientRect;
+    GetClientRect(hwnd, &clientRect);
+    int width = clientRect.right - clientRect.left;
+    int height = clientRect.bottom - clientRect.top;
+
+    // --- DRAW TO THE DESKTOP INSTEAD OF THE GAME ---
+    HDC hdc = GetDC(NULL);
+    HPEN redPen = CreatePen(PS_SOLID, 2, RGB(255, 0, 0));
+    HGDIOBJ oldPen = SelectObject(hdc, redPen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+
+    for (const auto& pos : _lightPositions) {
+        float screenX = 0, screenY = 0;
+
+        if (WorldToScreen(pos, camPos, camQuat, screenX, screenY, width, height)) {
+
+            // Translate the game's local window coordinates to global monitor pixels
+            POINT pt;
+            pt.x = static_cast<int>(screenX);
+            pt.y = static_cast<int>(screenY);
+            ClientToScreen(hwnd, &pt);
+
+            Rectangle(hdc, pt.x - 10, pt.y - 10, pt.x + 10, pt.y + 10);
+        }
+    }
+
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(redPen);
+    ReleaseDC(NULL, hdc); // Release NULL since we grabbed NULL
 }

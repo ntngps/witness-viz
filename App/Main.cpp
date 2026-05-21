@@ -316,21 +316,65 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetStringText(g_activateGame, L"Switch to game");
                 break;
             case ProcStatus::Running:
+            {
                 // Process was already running, and so were we (this recurs every heartbeat). Enforce settings and apply repeated actions.
                 g_trainer->SetNoclip(IsDlgButtonChecked(hwnd, NOCLIP_ENABLED));
 
-                // Check to see if we're holding the 'fly up' or 'fly down' buttons, then move the camera accordingly.
-                if (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) {
+                // Define the Virtual Key (VK) codes you want to use for flying.
+                // By default here, I'm setting Spacebar (VK_SPACE) for Up and Left Control (VK_LCONTROL) for Down.
+                // If the trainer has a UI box to set these keys, you would fetch that value here instead.
+                int vkNoclipUp = VK_NUMPAD8;
+                int vkNoclipDown = VK_NUMPAD2;
+
+                // Check if the UI button is being clicked OR if the actual keyboard hotkey is being held down
+                bool isUpHeld = (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) ||
+                    (GetAsyncKeyState(vkNoclipUp) & 0x8000);
+
+                bool isDownHeld = (SendMessage(g_flyDown, BM_GETSTATE, NULL, NULL) & BST_PUSHED) ||
+                    (GetAsyncKeyState(vkNoclipDown) & 0x8000);
+
+                // Move the camera accordingly based on our new, combined check
+                if (isUpHeld) {
                     auto pos = g_trainer->GetCameraPos();
                     pos[2] += 0.01f * GetWindowFloat(g_noclipSpeed);
                     pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
                     g_trainer->SetCameraPos(pos);
-                } else if (SendMessage(g_flyDown, BM_GETSTATE, NULL, NULL) & BST_PUSHED) {
+                }
+                else if (isDownHeld) {
                     auto pos = g_trainer->GetCameraPos();
                     pos[2] -= 0.01f * GetWindowFloat(g_noclipSpeed);
                     pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
                     g_trainer->SetCameraPos(pos);
                 }
+
+                // A static boolean acts as a lightswitch we can flip on and off
+                static bool showLights = false;
+                static bool f5WasHeld = false;
+
+                if (GetAsyncKeyState(VK_F5) & 0x8000) {
+                    if (!f5WasHeld) {
+                        showLights = !showLights;
+
+                        // If we just turned it ON, do the heavy memory scan once!
+                        if (showLights) {
+                            g_trainer->FindLightsOnce();
+                        }
+
+                        f5WasHeld = true;
+                    }
+                }
+                else {
+                    f5WasHeld = false;
+                }
+
+                if (showLights) {
+                    g_trainer->DrawLightVolumes(); // This is now safe to run every frame!
+                }
+
+                break; // Assuming there is a break at the end of this case block in the original code
+            }
+
+        
 
                 // If we are the foreground window, set FOV. Otherwise, read FOV.
                 if (g_hwnd == GetForegroundWindow()) {

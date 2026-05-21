@@ -43,6 +43,7 @@ public:
     float GetNoclipSpeed();
     std::vector<float> GetPlayerPos();
     std::vector<float> GetCameraPos();
+    std::vector<float> GetCameraAngle();
     std::vector<float> GetCameraAng();
     float GetFov();
     bool CanSave();
@@ -73,6 +74,11 @@ public:
     void SetEPOverlay(bool enable);
     void SetEPOverlayMinSize(bool enable);
     void ClampAimingPhi(bool clamp);
+
+    bool WorldToScreen(std::vector<float> worldPos, std::vector<float> camPos, std::vector<float> camQuat, float& screenX, float& screenY, int windowWidth, int windowHeight);
+    void DrawLightVolumes();
+    std::vector<std::vector<float>> _lightPositions; // A list to save the coordinates
+    void FindLightsOnce();
 
 private:
     ProcStatus Heartbeat();
