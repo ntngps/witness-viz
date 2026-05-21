@@ -80,6 +80,9 @@ public:
     std::vector<std::vector<float>> _lightPositions; // A list to save the coordinates
     void FindLightsOnce();
 
+    HWND _overlayHwnd = NULL; // overlay
+    void InitOverlay(); // overlay
+
 private:
     ProcStatus Heartbeat();
     void OnGameStart();

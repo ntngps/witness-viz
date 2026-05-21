@@ -935,9 +935,21 @@ void Trainer::FindLightsOnce() {
 }
 
 void Trainer::DrawLightVolumes() {
-    HWND hwnd = FindWindowA(NULL, "The Witness");
-    if (!hwnd) return;
+    HWND gameHwnd = FindWindowA(NULL, "The Witness");
+    if (!gameHwnd || !_overlayHwnd) return;
 
+    // 1. Find the exact screen coordinates of the game's renderable area
+    RECT clientRect;
+    GetClientRect(gameHwnd, &clientRect);
+    POINT topLeft = { 0, 0 };
+    ClientToScreen(gameHwnd, &topLeft);
+    int width = clientRect.right - clientRect.left;
+    int height = clientRect.bottom - clientRect.top;
+
+    // 2. Move our glass pane to perfectly cover the game area
+    SetWindowPos(_overlayHwnd, HWND_TOPMOST, topLeft.x, topLeft.y, width, height, SWP_SHOWWINDOW);
+
+    // 3. Read the camera safely
     std::vector<float> camPos;
     std::vector<float> camQuat;
     try {
@@ -948,34 +960,55 @@ void Trainer::DrawLightVolumes() {
         return;
     }
 
-    RECT clientRect;
-    GetClientRect(hwnd, &clientRect);
-    int width = clientRect.right - clientRect.left;
-    int height = clientRect.bottom - clientRect.top;
+    // 4. Setup the canvas on OUR overlay, not the game
+    HDC hdc = GetDC(_overlayHwnd);
 
-    // --- DRAW TO THE DESKTOP INSTEAD OF THE GAME ---
-    HDC hdc = GetDC(NULL);
+    // 5. WIPE THE GLASS: Paint the whole overlay Invisible Black to clear the previous frame
+    HBRUSH blackBrush = CreateSolidBrush(RGB(0, 0, 0));
+    RECT overlayRect = { 0, 0, width, height };
+    FillRect(hdc, &overlayRect, blackBrush);
+    DeleteObject(blackBrush);
+
+    // 6. DRAW THE BOXES
     HPEN redPen = CreatePen(PS_SOLID, 2, RGB(255, 0, 0));
     HGDIOBJ oldPen = SelectObject(hdc, redPen);
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
 
     for (const auto& pos : _lightPositions) {
         float screenX = 0, screenY = 0;
-
         if (WorldToScreen(pos, camPos, camQuat, screenX, screenY, width, height)) {
+            int x = static_cast<int>(screenX);
+            int y = static_cast<int>(screenY);
 
-            // Translate the game's local window coordinates to global monitor pixels
-            POINT pt;
-            pt.x = static_cast<int>(screenX);
-            pt.y = static_cast<int>(screenY);
-            ClientToScreen(hwnd, &pt);
-
-            Rectangle(hdc, pt.x - 10, pt.y - 10, pt.x + 10, pt.y + 10);
+            // Draw a 20x20 pixel square
+            Rectangle(hdc, x - 10, y - 10, x + 10, y + 10);
         }
     }
 
+    // 7. Cleanup
     SelectObject(hdc, oldPen);
     SelectObject(hdc, oldBrush);
     DeleteObject(redPen);
-    ReleaseDC(NULL, hdc); // Release NULL since we grabbed NULL
+    ReleaseDC(_overlayHwnd, hdc);
+}
+
+void Trainer::InitOverlay() {
+    WNDCLASSEXA wc = { sizeof(WNDCLASSEXA) };
+    wc.lpfnWndProc = DefWindowProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = "WitnessOverlay";
+    RegisterClassExA(&wc);
+
+    // Create a layered, transparent window that ignores mouse clicks
+    _overlayHwnd = CreateWindowExA(
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+        "WitnessOverlay", "Witness Overlay",
+        WS_POPUP,
+        0, 0, 800, 600, // Placeholder size, we will resize it dynamically
+        NULL, NULL, wc.hInstance, NULL
+    );
+
+    // Tell Windows: "Treat Black (RGB 0,0,0) as completely invisible"
+    SetLayeredWindowAttributes(_overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
+    ShowWindow(_overlayHwnd, SW_SHOW);
 }

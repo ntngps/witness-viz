@@ -749,6 +749,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
     g_witnessProc = std::make_shared<Memory>(L"witness64_d3d11.exe", L"witness64_d3d11.exe");
     g_trainer = std::make_shared<Trainer>(g_witnessProc);
+
+    g_trainer->InitOverlay(); // <--- ADD YOUR NEW GLASS PANE HERE!
+
     g_trainer->StartHeartbeat(g_hwnd, HEARTBEAT);
 #ifndef _DEBUG
     // Don't hook in debug mode. While debugging, we are paused (and thus cannot run the hook). So, we will timeout on every hook call!
