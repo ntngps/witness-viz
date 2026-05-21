@@ -27,7 +27,7 @@ Hotkeys::Hotkeys() {
         _hotkeyNames["load_position"] = MASK_SHIFT | MASK_CONTROL | 'P';
         _hotkeyNames["snap_to_panel"] = MASK_CONTROL | 'L';
         _hotkeyNames["open_doors"] = MASK_CONTROL | 'O';
-        _hotkeyNames["toggle_lights"] = VK_F5;
+        // _hotkeyNames["toggle_lights"] = VK_F5;
     }
 
     // Can't be changed, used to signal 'end of hold'

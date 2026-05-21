@@ -57,6 +57,6 @@ private:
         "open_save_folder:\n"
         "show_unsolved:\n"
         "distance_gating:\n"
-        "open_keybinds:\n"
-        "toggle_lights: F5\n";
+        "open_keybinds:\n";
+        // "toggle_lights: F5\n";
 };

@@ -348,7 +348,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
 
                 // A static boolean acts as a lightswitch we can flip on and off
-                static bool showLights = false;
+                /* static bool showLights = false;
                 static bool f5WasHeld = false;
 
                 if (GetAsyncKeyState(VK_F5) & 0x8000) {
@@ -369,7 +369,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                 if (showLights) {
                     g_trainer->DrawLightVolumes(); // This is now safe to run every frame!
-                }
+                } */
 
                 break; // Assuming there is a break at the end of this case block in the original code
             }
@@ -750,7 +750,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
     g_witnessProc = std::make_shared<Memory>(L"witness64_d3d11.exe", L"witness64_d3d11.exe");
     g_trainer = std::make_shared<Trainer>(g_witnessProc);
 
-    g_trainer->InitOverlay(); // <--- ADD YOUR NEW GLASS PANE HERE!
+    // g_trainer->InitOverlay(); // <--- ADD YOUR NEW GLASS PANE HERE!
 
     g_trainer->StartHeartbeat(g_hwnd, HEARTBEAT);
 #ifndef _DEBUG

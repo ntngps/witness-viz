@@ -3,8 +3,8 @@
 #include "Panels.h"
 
 // Tell the linker to grab the Windows Graphics toolboxes!
-#pragma comment(lib, "Gdi32.lib")
-#pragma comment(lib, "User32.lib")
+// #pragma comment(lib, "Gdi32.lib")
+// #pragma comment(lib, "User32.lib")
 
 Trainer::Trainer(std::shared_ptr<Memory> memory) : _memory(memory) {
     _memory->AddSigScan("84 C0 75 59 BA 20 00 00 00", [this](__int64 offset, int index, const std::vector<byte>& data) {
@@ -816,7 +816,7 @@ void Trainer::ClampAimingPhi(bool clamp) {
     _memory->WriteData<byte>({_debugMode}, {clamp ? (byte)0x00 : (byte)0x09});
 }
 
-bool Trainer::WorldToScreen(std::vector<float> worldPos, std::vector<float> camPos, std::vector<float> camQuat, float& screenX, float& screenY, int windowWidth, int windowHeight) {
+/* bool Trainer::WorldToScreen(std::vector<float> worldPos, std::vector<float> camPos, std::vector<float> camQuat, float& screenX, float& screenY, int windowWidth, int windowHeight) {
     //auto camPos = GetCameraPos();
     //auto camQuat = GetCameraAngle(); // 4 floats: X, Y, Z, W
 
@@ -872,7 +872,7 @@ bool Trainer::WorldToScreen(std::vector<float> worldPos, std::vector<float> camP
     return true; // The math succeeded and the object is on screen!
 }
 
-void Trainer::FindLightsOnce() {
+ void Trainer::FindLightsOnce() {
     _lightPositions.clear();
 
     // 1. Get our own safe handle to the game so we bypass the trainer's crash handler
@@ -1011,4 +1011,4 @@ void Trainer::InitOverlay() {
     // Tell Windows: "Treat Black (RGB 0,0,0) as completely invisible"
     SetLayeredWindowAttributes(_overlayHwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
     ShowWindow(_overlayHwnd, SW_SHOW);
-}
+} */
