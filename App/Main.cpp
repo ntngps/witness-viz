@@ -321,8 +321,70 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 // Process was already running, and so were we (this recurs every heartbeat). Enforce settings and apply repeated actions.
                 g_trainer->SetNoclip(IsDlgButtonChecked(hwnd, NOCLIP_ENABLED));
 
-                /// 1. Read the inputs
-                // 1. Read the inputs
+                // --- OMNI-DIRECTIONAL CINEMATIC DRONE ENGINE ---
+
+                if (IsDlgButtonChecked(hwnd, NOCLIP_SMOOTHING)) {
+                    // 1. Read Drone Inputs (Mapped to I, J, K, L so we don't fight the game's WASD!)
+                    bool fwdHeld = GetAsyncKeyState('I') & 0x8000;
+                    bool backHeld = GetAsyncKeyState('K') & 0x8000;
+                    bool leftHeld = GetAsyncKeyState('J') & 0x8000;
+                    bool rightHeld = GetAsyncKeyState('L') & 0x8000;
+                    bool upHeld = GetAsyncKeyState(VK_NUMPAD8) & 0x8000;
+                    bool downHeld = GetAsyncKeyState(VK_NUMPAD2) & 0x8000;
+
+                    // 2. Determine target velocities in LOCAL space (-1.0 to 1.0)
+                    float baseSpeed = 0.01f * GetWindowFloat(g_noclipSpeed);
+                    float targetFwd = (fwdHeld ? baseSpeed : 0.0f) - (backHeld ? baseSpeed : 0.0f);
+                    float targetRight = (rightHeld ? baseSpeed : 0.0f) - (leftHeld ? baseSpeed : 0.0f);
+                    float targetUp = (upHeld ? baseSpeed : 0.0f) - (downHeld ? baseSpeed : 0.0f);
+
+                    // 3. Keep track of current momentum for all 3 axes
+                    static float curFwd = 0.0f;
+                    static float curRight = 0.0f;
+                    static float curUp = 0.0f;
+
+                    // 4. Apply Lerp (Friction / Weight)
+                    float friction = 0.05f;
+                    curFwd += (targetFwd - curFwd) * friction;
+                    curRight += (targetRight - curRight) * friction;
+                    curUp += (targetUp - curUp) * friction;
+
+                    // 5. If the drone is moving, apply the complex math!
+                    if (abs(curFwd) > 0.0001f || abs(curRight) > 0.0001f || abs(curUp) > 0.0001f) {
+
+                        // A. Get the camera's rotation so we know which way we are looking
+                        auto camQuat = g_trainer->GetCameraAngle();
+                        float qx = camQuat[0], qy = camQuat[1], qz = camQuat[2], qw = camQuat[3];
+
+                        // B. Convert the Quaternion into Forward and Right directional vectors
+                        float fwdX = 2.0f * (qx * qz + qw * qy);
+                        float fwdY = 2.0f * (qy * qz - qw * qx);
+                        float fwdZ = 1.0f - 2.0f * (qx * qx + qy * qy);
+
+                        float rightX = 1.0f - 2.0f * (qy * qy + qz * qz);
+                        float rightY = 2.0f * (qx * qy + qw * qz);
+                        float rightZ = 2.0f * (qx * qz - qw * qy);
+
+                        // C. Map our local momentum into 3D World Space!
+                        float worldVelX = (curFwd * fwdX) + (curRight * rightX);
+                        float worldVelY = (curFwd * fwdY) + (curRight * rightY);
+
+                        // For cinematic drones, Z (Up/Down) is usually locked to global gravity, 
+                        // so we don't mix it with the camera's pitch to keep the horizon stable!
+                        float worldVelZ = (curFwd * fwdZ) + (curRight * rightZ) + curUp;
+
+                        // D. Apply the final movement safely
+                        auto pos = g_trainer->GetCameraPos();
+                        pos[0] += worldVelX;
+                        pos[1] += worldVelY;
+                        pos[2] += worldVelZ;
+                        pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
+
+                        g_trainer->SetCameraPos(pos);
+                    }
+                }
+               
+                /* // 1. Read the inputs
                 int vkNoclipUp = VK_NUMPAD8;
                 int vkNoclipDown = VK_NUMPAD2;
                 bool isUpHeld = (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) || (GetAsyncKeyState(vkNoclipUp) & 0x8000);
@@ -360,7 +422,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     pos[2] += currentZVelocity;
                     pos[2] = CLAMP(pos[2], -10000.0f, 10000.0f);
                     g_trainer->SetCameraPos(pos);
-                }
+                } */
 
                
 
