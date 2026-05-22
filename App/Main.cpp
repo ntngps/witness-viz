@@ -322,6 +322,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 g_trainer->SetNoclip(IsDlgButtonChecked(hwnd, NOCLIP_ENABLED));
 
                 /// 1. Read the inputs
+                // 1. Read the inputs
                 int vkNoclipUp = VK_NUMPAD8;
                 int vkNoclipDown = VK_NUMPAD2;
                 bool isUpHeld = (SendMessage(g_flyUp, BM_GETSTATE, NULL, NULL) & BST_PUSHED) || (GetAsyncKeyState(vkNoclipUp) & 0x8000);
@@ -361,47 +362,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     g_trainer->SetCameraPos(pos);
                 }
 
-                // --- DYNAMIC FOV ZOOM ENGINE ---
-
-                // 1. Check if our Numpad keys are being held
-                bool zoomInHeld = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000);
-                bool zoomOutHeld = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000);
-
-                // 2. Set the target velocity (How fast we want the lens to zoom)
-                float targetFovVelocity = 0.0f;
-                float zoomSpeed = 0.4f; // Adjust this to make the max zoom speed faster or slower
-
-                if (zoomInHeld) {
-                    targetFovVelocity = -zoomSpeed; // Zoom IN means lowering the FOV number
-                }
-                else if (zoomOutHeld) {
-                    targetFovVelocity = zoomSpeed;  // Zoom OUT means raising the FOV number
-                }
-
-                // 3. Keep track of current velocity for that buttery smooth Lerp
-                static float currentFovVelocity = 0.0f;
-
-                // 4. Calculate the momentum (0.05f is the 'weight' of the camera lens)
-                currentFovVelocity += (targetFovVelocity - currentFovVelocity) * 0.05f;
-
-                // 5. Apply the zoom if the lens is moving
-                if (abs(currentFovVelocity) > 0.001f) {
-                    double fov = g_trainer->GetFov();
-                    fov += currentFovVelocity;
-
-                    // SAFETY CLAMPS: Do not let the FOV go below 5 or above 140, 
-                    // otherwise the game's rendering math will divide by zero and crash!
-                    if (fov < 5.0f) {
-                        fov = 5.0f;
-                        currentFovVelocity = 0.0f; // Stop momentum if we hit the wall
-                    }
-                    else if (fov > 140.0f) {
-                        fov = 140.0f;
-                        currentFovVelocity = 0.0f;
-                    }
-
-                    g_trainer->SetFov(fov);
-                }
+               
 
               
 
