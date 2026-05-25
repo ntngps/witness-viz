@@ -17,18 +17,28 @@ std::shared_ptr<Hotkeys> Hotkeys::Get() {
 }
 
 Hotkeys::Hotkeys() {
-    if (!ParseHotkeyFile()) {
-        // Default hotkeys (duplicate of what's defined in DEFAULT_HOTKEYS in the header), just in case the parse fails.
-        _hotkeyNames["noclip_enabled"] = MASK_CONTROL | 'N';
-        _hotkeyNames["can_save_game"] = MASK_SHIFT | MASK_CONTROL | 'S';
-        _hotkeyNames["open_console"] = MASK_SHIFT | VK_OEM_3;
-        _hotkeyNames["ep_overlay"] = MASK_ALT | '2';
-        _hotkeyNames["save_position"] = MASK_CONTROL | 'P';
-        _hotkeyNames["load_position"] = MASK_SHIFT | MASK_CONTROL | 'P';
-        _hotkeyNames["snap_to_panel"] = MASK_CONTROL | 'L';
-        _hotkeyNames["open_doors"] = MASK_CONTROL | 'O';
-        // _hotkeyNames["toggle_lights"] = VK_F5;
-    }
+    ParseHotkeyFile();
+
+    // Apply built-in defaults for any hotkey not defined in the keybinds file.
+    // This ensures new hotkeys added in updates work even for users with existing files.
+    auto setDefault = [this](const char* name, keycode code) {
+        if (_hotkeyNames.find(name) == _hotkeyNames.end())
+            _hotkeyNames[name] = code;
+    };
+    setDefault("noclip_enabled",  MASK_CONTROL | 'N');
+    setDefault("fly_up",          VK_PRIOR);
+    setDefault("fly_down",        VK_NEXT);
+    setDefault("can_save_game",   MASK_SHIFT | MASK_CONTROL | 'S');
+    setDefault("open_console",    MASK_SHIFT | VK_OEM_3);
+    setDefault("ep_overlay",      MASK_ALT | '2');
+    setDefault("save_position",   MASK_CONTROL | 'P');
+    setDefault("load_position",   MASK_SHIFT | MASK_CONTROL | 'P');
+    setDefault("snap_to_panel",   MASK_CONTROL | 'L');
+    setDefault("open_doors",      MASK_CONTROL | 'O');
+    setDefault("keyframe_add",    MASK_CONTROL | VK_OEM_PLUS);
+    setDefault("keyframe_remove", MASK_CONTROL | VK_OEM_MINUS);
+    setDefault("keyframe_prev",   MASK_CONTROL | '2');
+    setDefault("keyframe_next",   MASK_CONTROL | '3');
 
     // Can't be changed, used to signal 'end of hold'
     _hotkeyNames["key_released"] = KEYCODE_RELEASE;
@@ -76,6 +86,8 @@ bool Hotkeys::ParseHotkeyFile() {
         CloseHandle(file);
     }
 
+    // Scope the ifstream so it is closed before we potentially append below.
+    {
     std::ifstream file(path);
     if (file.fail()) return false;
 
@@ -107,6 +119,7 @@ bool Hotkeys::ParseHotkeyFile() {
             else if (CompareNoCase(segment, "win"))      keyCode |= MASK_WIN;
             else if (CompareNoCase(segment, "tilde"))    keyCode |= MASK_SHIFT | VK_OEM_3;
             else if (CompareNoCase(segment, "plus"))     keyCode |= VK_OEM_PLUS;
+            else if (CompareNoCase(segment, "minus"))    keyCode |= VK_OEM_MINUS;
             else if (CompareNoCase(segment, "pageup"))   keyCode |= VK_PRIOR;
             else if (CompareNoCase(segment, "pagedown")) keyCode |= VK_NEXT;
             else if (CompareNoCase(segment, "home"))     keyCode |= VK_HOME;
@@ -139,6 +152,26 @@ bool Hotkeys::ParseHotkeyFile() {
             }
             _hotkeyNames[key] = keyCode;
         }
+    }
+    } // ifstream closed here
+
+    // Append any entries that are in DEFAULT_KEYBINDS but missing from the file.
+    // This keeps keybinds.txt up-to-date as new hotkeys are added, without wiping
+    // any customizations the user has already made.
+    static const struct { const char* name; const char* binding; } kNewEntries[] = {
+        {"keyframe_add",    "Control-Plus"},
+        {"keyframe_remove", "Control-Minus"},
+        {"keyframe_prev",   "Control-2"},
+        {"keyframe_next",   "Control-3"},
+    };
+    bool needsAppend = false;
+    for (const auto& e : kNewEntries)
+        if (_hotkeyNames.find(e.name) == _hotkeyNames.end()) { needsAppend = true; break; }
+    if (needsAppend) {
+        std::ofstream appendFile(path, std::ios::app);
+        for (const auto& e : kNewEntries)
+            if (_hotkeyNames.find(e.name) == _hotkeyNames.end())
+                appendFile << e.name << ": " << e.binding << "\n";
     }
 
     return true;
@@ -208,6 +241,7 @@ std::wstring Hotkeys::GetHoverText(keycode keyCode) {
     if      (keyCode >= 'a' && keyCode <= 'z')  ss << (char)(keyCode - 'a' + 'A');
     else if (keyCode >= '0' && keyCode <= ']')  ss << (char)keyCode; // Includes A-Z and 0-9
     else if (keyCode == VK_OEM_PLUS)            ss << '+';
+    else if (keyCode == VK_OEM_MINUS)           ss << '-';
     else if (keyCode == VK_PRIOR)               ss << "PageUp";
     else if (keyCode == VK_NEXT)                ss << "PageDown";
     else if (keyCode == VK_HOME)                ss << "Home";

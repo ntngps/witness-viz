@@ -7,6 +7,7 @@
 #include "Trainer.h"
 #include "Hotkeys.h"
 
+#include <mutex>
 #include <unordered_set>
 
 #define HEARTBEAT           0x401
@@ -35,7 +36,15 @@
 #define NOCLIP_DOWN         0x425
 #define KEY_RELEASED        0x426
 #define OPEN_KEYBINDS       0x427
-#define NOCLIP_SMOOTHING    0x430 // Add our new Cinematic Toggle ID!
+#define NOCLIP_SMOOTHING    0x430
+#define KEYFRAME_ADD        0x431
+#define KEYFRAME_REMOVE     0x432
+#define KEYFRAME_PREV       0x433
+#define KEYFRAME_NEXT       0x434
+#define KEYFRAME_REMOVE_SEL 0x435
+#define EASING_SPEED        0x436
+#define KEYFRAME_LIST       0x437
+#define KEYFRAME_REFRESH    (WM_APP + 1)
 
 // BUGS:
 // - Changing from old ver to new ver can set FOV = 0?
@@ -75,6 +84,21 @@ HWND g_noclipSpeed, g_currentPos, g_savedPos, g_fovCurrent, g_sprintSpeed, g_act
 
 std::vector<float> g_savedCameraPos = {0.0f, 0.0f, 0.0f};
 std::vector<float> g_savedCameraAng = {0.0f, 0.0f};
+
+struct Keyframe {
+    std::vector<float> pos;
+    std::vector<float> ang;
+};
+std::vector<Keyframe> g_keyframes;
+int g_currentKeyframeIdx = -1;
+int g_targetKeyframeIdx = -1;
+std::vector<float> g_lerpStartPos;
+std::vector<float> g_lerpStartAng;
+float g_lerpT = 0.0f;
+std::mutex g_keyframeMutex;
+HWND g_keyframeList = nullptr;
+HWND g_easingSpeed = nullptr;
+
 int previousPanel = -1;
 std::vector<float> previousPanelStart;
 
@@ -141,6 +165,22 @@ std::wstring GetWindowString(HWND hwnd) {
 
 float GetWindowFloat(HWND hwnd) {
     return wcstof(GetWindowString(hwnd).c_str(), nullptr);
+}
+
+void RefreshKeyframeList() {
+    SendMessage(g_keyframeList, LB_RESETCONTENT, 0, 0);
+    std::lock_guard<std::mutex> lock(g_keyframeMutex);
+    for (int i = 0; i < (int)g_keyframes.size(); i++) {
+        const auto& kf = g_keyframes[i];
+        std::wstring entry(80, L'\0');
+        int len = swprintf_s(entry.data(), entry.size(),
+            L"[%d]  X%.1f  Y%.1f  Z%.1f", i + 1, kf.pos[0], kf.pos[1], kf.pos[2]);
+        entry.resize(len);
+        SendMessage(g_keyframeList, LB_ADDSTRING, 0, (LPARAM)entry.c_str());
+    }
+    if (g_currentKeyframeIdx >= 0 && g_currentKeyframeIdx < (int)g_keyframes.size()) {
+        SendMessage(g_keyframeList, LB_SETCURSEL, g_currentKeyframeIdx, 0);
+    }
 }
 
 void SetVideoData(const Trainer::VideoData& videoData) {
@@ -323,7 +363,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
                 // --- OMNI-DIRECTIONAL CINEMATIC DRONE ENGINE ---
 
-                if (IsDlgButtonChecked(hwnd, NOCLIP_SMOOTHING)) {
+                if (IsDlgButtonChecked(hwnd, NOCLIP_SMOOTHING) && g_targetKeyframeIdx < 0) {
                     // 1. Read Drone Inputs (Mapped to I, J, K, L so we don't fight the game's WASD!)
                     bool fwdHeld = GetAsyncKeyState('I') & 0x8000;
                     bool backHeld = GetAsyncKeyState('K') & 0x8000;
@@ -383,7 +423,141 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                         g_trainer->SetCameraPos(pos);
                     }
                 }
-               
+
+                // --- KEYFRAME HOTKEYS (polled via GetAsyncKeyState, same pattern as drone engine) ---
+                // The hook-based hotkey system requires the trainer window to be in focus or
+                // g_witnessProc->IsForeground() to succeed. GetAsyncKeyState always works.
+                if (IsDlgButtonChecked(hwnd, NOCLIP_ENABLED)) {
+                    static bool s_prevAddKf = false, s_prevRemoveKf = false;
+                    static bool s_prevPrevKf = false, s_prevNextKf = false;
+
+                    bool ctrl      = (GetAsyncKeyState(VK_CONTROL)   & 0x8000) != 0;
+                    bool addKf     = ctrl && (GetAsyncKeyState(VK_OEM_PLUS)  & 0x8000) != 0;
+                    bool removeKf  = ctrl && (GetAsyncKeyState(VK_OEM_MINUS) & 0x8000) != 0;
+                    bool prevKf    = ctrl && (GetAsyncKeyState('2')           & 0x8000) != 0;
+                    bool nextKf    = ctrl && (GetAsyncKeyState('3')           & 0x8000) != 0;
+
+                    if (addKf && !s_prevAddKf) {
+                        Keyframe kf;
+                        kf.pos = g_trainer->GetCameraPos();
+                        kf.ang = g_trainer->GetCameraAng();
+                        {
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            g_keyframes.push_back(kf);
+                            g_currentKeyframeIdx = (int)g_keyframes.size() - 1;
+                        }
+                        PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+                    }
+
+                    if (removeKf && !s_prevRemoveKf) {
+                        {
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            if (!g_keyframes.empty()) {
+                                int lastIdx = (int)g_keyframes.size() - 1;
+                                g_keyframes.pop_back();
+                                if (g_currentKeyframeIdx == lastIdx) g_currentKeyframeIdx = lastIdx - 1;
+                                if (g_targetKeyframeIdx  == lastIdx) g_targetKeyframeIdx  = -1;
+                            }
+                        }
+                        PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+                    }
+
+                    if (prevKf && !s_prevPrevKf) {
+                        int targetIdx = -1;
+                        {
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            if (!g_keyframes.empty()) {
+                                if      (g_currentKeyframeIdx > 0)  targetIdx = g_currentKeyframeIdx - 1;
+                                else if (g_currentKeyframeIdx < 0)  targetIdx = 0;
+                            }
+                        }
+                        if (targetIdx >= 0) {
+                            auto startPos = g_trainer->GetCameraPos();
+                            auto startAng = g_trainer->GetCameraAng();
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            g_targetKeyframeIdx = targetIdx;
+                            g_lerpStartPos = startPos;
+                            g_lerpStartAng = startAng;
+                            g_lerpT = 0.0f;
+                        }
+                    }
+
+                    if (nextKf && !s_prevNextKf) {
+                        int targetIdx = -1;
+                        {
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            if (!g_keyframes.empty()) {
+                                int maxIdx  = (int)g_keyframes.size() - 1;
+                                int nextIdx = (g_currentKeyframeIdx < 0) ? 0 : g_currentKeyframeIdx + 1;
+                                if (nextIdx <= maxIdx) targetIdx = nextIdx;
+                            }
+                        }
+                        if (targetIdx >= 0) {
+                            auto startPos = g_trainer->GetCameraPos();
+                            auto startAng = g_trainer->GetCameraAng();
+                            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                            g_targetKeyframeIdx = targetIdx;
+                            g_lerpStartPos = startPos;
+                            g_lerpStartAng = startAng;
+                            g_lerpT = 0.0f;
+                        }
+                    }
+
+                    s_prevAddKf    = addKf;
+                    s_prevRemoveKf = removeKf;
+                    s_prevPrevKf   = prevKf;
+                    s_prevNextKf   = nextKf;
+                }
+
+                // --- CAMERA KEYFRAME ANIMATION ---
+                if (g_targetKeyframeIdx >= 0 && IsDlgButtonChecked(hwnd, NOCLIP_ENABLED)) {
+                    Keyframe targetKf;
+                    std::vector<float> startPos, startAng;
+                    float easingSpeedVal = g_easingSpeed ? GetWindowFloat(g_easingSpeed) : 1.0f;
+                    if (easingSpeedVal <= 0.0f) easingSpeedVal = 1.0f;
+                    bool valid = false;
+                    bool done = false;
+                    float lerpT = 0.0f;
+
+                    {
+                        std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                        if (g_targetKeyframeIdx < (int)g_keyframes.size() &&
+                            g_lerpStartPos.size() == 3 && g_lerpStartAng.size() == 2) {
+                            g_lerpT += easingSpeedVal * 0.05f;
+                            if (g_lerpT > 1.0f) g_lerpT = 1.0f;
+                            lerpT = g_lerpT;
+                            targetKf = g_keyframes[g_targetKeyframeIdx];
+                            startPos = g_lerpStartPos;
+                            startAng = g_lerpStartAng;
+                            valid = true;
+                            if (g_lerpT >= 1.0f) {
+                                g_currentKeyframeIdx = g_targetKeyframeIdx;
+                                g_targetKeyframeIdx = -1;
+                                done = true;
+                            }
+                        } else {
+                            g_targetKeyframeIdx = -1;
+                        }
+                    }
+
+                    if (valid) {
+                        // Smoothstep easing: slow start, fast middle, slow end
+                        float t = lerpT * lerpT * (3.0f - 2.0f * lerpT);
+                        std::vector<float> newPos = {
+                            startPos[0] + t * (targetKf.pos[0] - startPos[0]),
+                            startPos[1] + t * (targetKf.pos[1] - startPos[1]),
+                            startPos[2] + t * (targetKf.pos[2] - startPos[2])
+                        };
+                        std::vector<float> newAng = {
+                            startAng[0] + t * (targetKf.ang[0] - startAng[0]),
+                            startAng[1] + t * (targetKf.ang[1] - startAng[1])
+                        };
+                        g_trainer->SetCameraPos(newPos);
+                        g_trainer->SetCameraAng(newAng);
+                        if (done) PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+                    }
+                }
+
                 /* // 1. Read the inputs
                 int vkNoclipUp = VK_NUMPAD8;
                 int vkNoclipDown = VK_NUMPAD2;
@@ -457,6 +631,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 }
                 break;
             }
+            return 0;
+        case KEYFRAME_REFRESH:
+            RefreshKeyframeList();
             return 0;
         case WM_COMMAND:
             break; // LOWORD(wParam) contains the actual command, handled below
@@ -550,6 +727,74 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 trainer->SetPlayerPos(playerPos);
                 SetPosAndAngText(g_currentPos, g_savedCameraPos, g_savedCameraAng);
             }
+        } else if (command == KEYFRAME_ADD) {
+            if (!IsDlgButtonChecked(g_hwnd, NOCLIP_ENABLED)) return;
+            Keyframe kf;
+            kf.pos = trainer->GetCameraPos();
+            kf.ang = trainer->GetCameraAng();
+            {
+                std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                g_keyframes.push_back(kf);
+                g_currentKeyframeIdx = (int)g_keyframes.size() - 1;
+            }
+            PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+        } else if (command == KEYFRAME_REMOVE) {
+            {
+                std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                if (!g_keyframes.empty()) {
+                    int lastIdx = (int)g_keyframes.size() - 1;
+                    g_keyframes.pop_back();
+                    if (g_currentKeyframeIdx == lastIdx) g_currentKeyframeIdx = lastIdx - 1;
+                    if (g_targetKeyframeIdx == lastIdx) g_targetKeyframeIdx = -1;
+                }
+            }
+            PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+        } else if (command == KEYFRAME_REMOVE_SEL) {
+            int sel = (int)SendMessage(g_keyframeList, LB_GETCURSEL, 0, 0);
+            if (sel != LB_ERR) {
+                {
+                    std::lock_guard<std::mutex> lock(g_keyframeMutex);
+                    if (sel < (int)g_keyframes.size()) {
+                        g_keyframes.erase(g_keyframes.begin() + sel);
+                        if (g_currentKeyframeIdx == sel) g_currentKeyframeIdx = -1;
+                        else if (g_currentKeyframeIdx > sel) g_currentKeyframeIdx--;
+                        if (g_targetKeyframeIdx == sel) g_targetKeyframeIdx = -1;
+                        else if (g_targetKeyframeIdx > sel) g_targetKeyframeIdx--;
+                    }
+                }
+                PostMessage(g_hwnd, KEYFRAME_REFRESH, 0, 0);
+            }
+        } else if (command == KEYFRAME_PREV) {
+            if (!IsDlgButtonChecked(g_hwnd, NOCLIP_ENABLED)) return;
+            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+            if (!g_keyframes.empty() && g_currentKeyframeIdx > 0) {
+                g_targetKeyframeIdx = g_currentKeyframeIdx - 1;
+                g_lerpStartPos = trainer->GetCameraPos();
+                g_lerpStartAng = trainer->GetCameraAng();
+                g_lerpT = 0.0f;
+            } else if (!g_keyframes.empty() && g_currentKeyframeIdx < 0) {
+                g_targetKeyframeIdx = 0;
+                g_lerpStartPos = trainer->GetCameraPos();
+                g_lerpStartAng = trainer->GetCameraAng();
+                g_lerpT = 0.0f;
+            }
+        } else if (command == KEYFRAME_NEXT) {
+            if (!IsDlgButtonChecked(g_hwnd, NOCLIP_ENABLED)) return;
+            std::lock_guard<std::mutex> lock(g_keyframeMutex);
+            if (!g_keyframes.empty()) {
+                int maxIdx = (int)g_keyframes.size() - 1;
+                int nextIdx = (g_currentKeyframeIdx < 0) ? 0 : g_currentKeyframeIdx + 1;
+                if (nextIdx <= maxIdx) {
+                    g_targetKeyframeIdx = nextIdx;
+                    g_lerpStartPos = trainer->GetCameraPos();
+                    g_lerpStartAng = trainer->GetCameraAng();
+                    g_lerpT = 0.0f;
+                }
+            }
+        } else if (command == EASING_SPEED) {
+            // Read directly in heartbeat; no action needed here.
+        } else if (command == KEYFRAME_LIST) {
+            // Listbox selection change notification; no action needed.
         }
     });
     t.detach();
@@ -753,6 +998,71 @@ void CreateComponents() {
     // Required to 'unselect' any hold-based keybinds
     Hotkeys::Get()->RegisterHotkey("key_released", KEY_RELEASED);
 
+    // --- CAMERA KEYFRAME SEQUENCER ---
+    y += 8;
+    CreateLabel(x, y, 220, L"Camera Keyframes:");
+    y += 22;
+
+    CreateLabel(x, y + 5, 90, L"Easing Speed");
+    g_easingSpeed = CreateText(x + 95, y, 125, L"1.0", EASING_SPEED);
+
+    // Add Keyframe button (has hotkey Ctrl+Shift+Plus)
+    HWND addKfBtn = CreateWindow(L"BUTTON", L"+ Add",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        x, y, 100, 26,
+        g_hwnd, (HMENU)KEYFRAME_ADD, g_hInstance, NULL);
+    Hotkeys::Get()->RegisterHotkey("keyframe_add", KEYFRAME_ADD);
+    {
+        std::wstring tip = Hotkeys::Get()->GetHoverText("keyframe_add");
+        CreateTooltip(addKfBtn, tip.c_str());
+    }
+
+    // Prev / Next keyframe buttons (with hotkeys)
+    HWND prevKfBtn = CreateWindow(L"BUTTON", L"◄ Prev",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        x + 105, y, 55, 26,
+        g_hwnd, (HMENU)KEYFRAME_PREV, g_hInstance, NULL);
+    Hotkeys::Get()->RegisterHotkey("keyframe_prev", KEYFRAME_PREV);
+    {
+        std::wstring tip = Hotkeys::Get()->GetHoverText("keyframe_prev");
+        CreateTooltip(prevKfBtn, tip.c_str());
+    }
+
+    HWND nextKfBtn = CreateWindow(L"BUTTON", L"Next ►",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        x + 163, y, 57, 26,
+        g_hwnd, (HMENU)KEYFRAME_NEXT, g_hInstance, NULL);
+    Hotkeys::Get()->RegisterHotkey("keyframe_next", KEYFRAME_NEXT);
+    {
+        std::wstring tip = Hotkeys::Get()->GetHoverText("keyframe_next");
+        CreateTooltip(nextKfBtn, tip.c_str());
+    }
+    y += 32;
+
+    // Scrollable keyframe list
+    g_keyframeList = CreateWindow(L"LISTBOX", NULL,
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+        x, y, 195, 150,
+        g_hwnd, (HMENU)KEYFRAME_LIST, g_hInstance, NULL);
+
+    // Remove Selected and Remove Last buttons to the right of the list
+    HWND removeSelBtn = CreateWindow(L"BUTTON", L"− Sel",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        x + 200, y, 50, 26,
+        g_hwnd, (HMENU)KEYFRAME_REMOVE_SEL, g_hInstance, NULL);
+    CreateTooltip(removeSelBtn, L"Remove selected keyframe");
+
+    HWND removeLastBtn = CreateWindow(L"BUTTON", L"− Last",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        x + 200, y + 30, 50, 26,
+        g_hwnd, (HMENU)KEYFRAME_REMOVE, g_hInstance, NULL);
+    Hotkeys::Get()->RegisterHotkey("keyframe_remove", KEYFRAME_REMOVE);
+    {
+        std::wstring tip = Hotkeys::Get()->GetHoverText("keyframe_remove");
+        CreateTooltip(removeLastBtn, tip.c_str());
+    }
+    y += 155; // advance past keyframe list height
+
 #ifdef _DEBUG
     CreateButton(x, y, 200, L"Show nearby entities", SHOW_NEARBY, "show_nearby");
     CreateButton(x, y, 200, L"Export all entities", EXPORT, "export_entities");
@@ -792,16 +1102,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
     RegisterClass(&wndClass);
 
 #ifndef _DEBUG
-    int height = 500;
-#else // Debug mode has some extra *stuff* at the bottom for the sounds. Make the box bigger to handle it.
-    int height = 600;
+    int height = 660;
+#else
+    int height = 760;
 #endif
 
     RECT rect;
     GetClientRect(GetDesktopWindow(), &rect);
     g_hwnd = CreateWindow(WINDOW_CLASS, WINDOW_TITLE,
         WS_SYSMENU | WS_MINIMIZEBOX,
-        rect.right - 550, 200, 500, height,
+        rect.right - 640, 200, 590, height,
         nullptr, nullptr, hInstance, nullptr);
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);

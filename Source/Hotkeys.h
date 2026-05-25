@@ -57,6 +57,10 @@ private:
         "open_save_folder:\n"
         "show_unsolved:\n"
         "distance_gating:\n"
-        "open_keybinds:\n";
+        "open_keybinds:\n"
+        "keyframe_add: Control-Plus\n"
+        "keyframe_remove: Control-Minus\n"
+        "keyframe_prev: Control-2\n"
+        "keyframe_next: Control-3\n";
         // "toggle_lights: F5\n";
 };
