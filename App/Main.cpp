@@ -330,7 +330,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 previousPanel = -1;
                 g_trainer->SetNoclipSpeed(GetWindowFloat(g_noclipSpeed));
                 g_trainer->SetSprintSpeed(GetWindowFloat(g_sprintSpeed));
-                g_trainer->SetFov(GetWindowFloat(g_fovCurrent));
+                {
+                    float fov = GetWindowFloat(g_fovCurrent);
+                    if (fov > 0.0f) g_trainer->SetFov(fov);
+                }
                 g_trainer->SetNoclip(IsDlgButtonChecked(hwnd, NOCLIP_ENABLED));
                 g_trainer->SetCanSave(IsDlgButtonChecked(hwnd, CAN_SAVE));
                 g_trainer->SetRandomDoorsPractice(IsDlgButtonChecked(hwnd, DOORS_PRACTICE));
@@ -345,7 +348,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 SetStringText(g_hwnd, WINDOW_TITLE);
                 SetFloatText(g_noclipSpeed, g_trainer->GetNoclipSpeed());
                 SetFloatText(g_sprintSpeed, g_trainer->GetSprintSpeed());
-                SetFloatText(g_fovCurrent, (float)g_trainer->GetFov());
+                {
+                    float fov = (float)g_trainer->GetFov();
+                    if (fov > 0.0f) SetFloatText(g_fovCurrent, fov);
+                }
                 CheckDlgButton(hwnd, NOCLIP_ENABLED, g_trainer->GetNoclip());
                 EnableWindow(g_flyUp, g_trainer->GetNoclip());
                 EnableWindow(g_flyDown, g_trainer->GetNoclip());
@@ -602,16 +608,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
               
 
-                break; // Assuming there is a break at the end of this case block in the original code
-            }
+                // NOTE: a premature `break;` + closing `}` used to sit here. It ended the
+                // Running case early and orphaned the FOV sync, snap-to-panel, and live
+                // position-display code below as unreachable dead code. Removed so that code
+                // runs every heartbeat again. The case is closed after the display block below.
 
-        
+
 
                 // If we are the foreground window, set FOV. Otherwise, read FOV.
+                // Guard against 0/negative: a transient failed memory read returns 0, and an
+                // empty text box parses as 0 -- neither should ever be pushed into the game.
                 if (g_hwnd == GetForegroundWindow()) {
-                    g_trainer->SetFov(GetWindowFloat(g_fovCurrent));
+                    float fov = GetWindowFloat(g_fovCurrent);
+                    if (fov > 0.0f) g_trainer->SetFov(fov);
                 } else {
-                    SetFloatText(g_fovCurrent, (float)g_trainer->GetFov());
+                    float fov = (float)g_trainer->GetFov();
+                    if (fov > 0.0f) SetFloatText(g_fovCurrent, fov);
                 }
 
                 // Continuously update the 'snap target' if one is selected
@@ -630,7 +642,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     #endif
                 }
                 break;
-            }
+            } // close the Running case scope (opened at `case ProcStatus::Running: {`)
+            } // close switch ((ProcStatus)wParam)
             return 0;
         case KEYFRAME_REFRESH:
             RefreshKeyframeList();
@@ -935,7 +948,7 @@ void CreateComponents() {
     g_sprintSpeed = CreateText(100, y, 130, L"2", SPRINT_SPEED);
 
     CreateLabel(x, y + 4, 100, L"Field of View");
-    g_fovCurrent = CreateText(100, y, 130, L"50.534012", FOV_CURRENT);
+    g_fovCurrent = CreateText(100, y, 130, L"100", FOV_CURRENT);
 
     auto [_, canSave] = CreateLabelAndCheckbox(x, y, 185, L"Can save the game", CAN_SAVE, "can_save_game");
     g_canSave = canSave;

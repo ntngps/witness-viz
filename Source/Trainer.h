@@ -60,7 +60,7 @@ public:
     void SetPlayerPos(const std::vector<float>& pos);
     void SetCameraPos(const std::vector<float>& pos);
     void SetCameraAng(const std::vector<float>& ang);
-    double GetFov();
+    float GetFov();
     void SetFov(double fov);
     void SetCanSave(bool canSave);
     void SetSprintSpeed(float speed);

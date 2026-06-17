@@ -259,7 +259,7 @@ void Trainer::OnGameStart() {
 Trainer::~Trainer() {
     SetNoclip(false);
     SetNoclipSpeed(4.0f);
-    double fov = GetFov();
+    float fov = GetFov();
     SetFov(CLAMP(fov, 80.0f, 120.0f));
     SetCanSave(true);
     SetSprintSpeed(2.0f);
@@ -580,11 +580,11 @@ std::vector<float> Trainer::GetCameraAng() {
     return _memory->ReadData<float>({_cameraAng}, 2);
 }
 
-/* this is the original GetFov function 
 float Trainer::GetFov() {
     if (_fovCurrent == 0) return 0.0f; // FOV is not available on some old patches
 
-    // This is the inverse of fov_vertical_from_horizontal.
+    // The game stores vertical FOV as a float; the in-game slider shows horizontal FOV.
+    // This is the inverse of fov_vertical_from_horizontal (vertical -> horizontal).
     double fov = _memory->ReadData<float>({_fovCurrent}, 1)[0];
     fov *= 0.00872664625997165;
     fov = tan(fov);
@@ -592,7 +592,7 @@ float Trainer::GetFov() {
     fov = atan(fov);
     fov *= 114.5915590261646;
     return (float)fov;
-} */
+}
 
 bool Trainer::CanSave() {
     return _memory->ReadData<byte>({_campaignState, 0x50}, 1)[0] == 0x00;
@@ -654,22 +654,12 @@ void Trainer::SetCameraAng(const std::vector<float>& ang) {
     _memory->WriteData<float>({_cameraAng}, ang);
 }
 
-double Trainer::GetFov() {
-    if (!_fovCurrent) return 50.0f;
-    return _memory->ReadData<double>({ _fovCurrent }, 1)[0];
-}
-
 void Trainer::SetFov(double fov) {
-    if (!_fovCurrent) return;
-
-    // Create the vector explicitly on its own line so the compiler doesn't panic
-    std::vector<double> fovData = { fov };
-    _memory->WriteData<double>({ _fovCurrent }, fovData);
-}
-
-/* original: void Trainer::SetFov(double fov) {
     if (_fovCurrent == 0) return;
-    // This computation is called fov_vertical_from_horizontal.
+    if (fov <= 0.0) return; // never write a degenerate FOV (e.g. from a failed read or empty text box)
+
+    // The game stores vertical FOV as a float; the trainer field holds horizontal FOV.
+    // This computation is called fov_vertical_from_horizontal (horizontal -> vertical).
     fov *= 0.00872664625997165;
     fov = tan(fov);
     fov *= 0.5625f;
@@ -677,7 +667,7 @@ void Trainer::SetFov(double fov) {
     fov *= 114.5915590261646;
 
     _memory->WriteData<float>({_fovCurrent}, {(float)fov});
-} */
+}
 
 void Trainer::SetCanSave(bool canSave) {
     _memory->WriteData<byte>({_campaignState, 0x50}, {canSave ? (byte)0x00 : (byte)0x01});
